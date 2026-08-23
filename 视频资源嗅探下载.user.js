@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         视频资源嗅探与下载
 // @namespace    https://github.com/heyheyhey3131/video-resource-sniffer
-// @version      1.0.2
+// @version      1.0.3
 // @description  从网页、网络请求和流媒体清单中识别视频资源，并通过悬浮按钮提供下载、复制和 FFmpeg 选项。支持 HLS/DASH/MP4、AES-128 解密、PNG/GIF 伪装剥离、Via 移动端适配。
 // @author       OpenCode
 // @license      MIT
@@ -2312,6 +2312,33 @@
 
     function savePreparedVideo(item, automatic = false) {
         if (!item.readyDownloadUrl) return;
+        const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+        const isViaLike = /Via|Quark|UCBrowser|QQBrowser|MiuiBrowser/i.test(userAgent);
+        // Via 的 WebView 对 a[download] 的 blob: 处理会抛 javabridge 异常，改用 GM_download 或 window.open
+        if (isViaLike && typeof GM_download === 'function') {
+            try {
+                GM_download({
+                    url: item.readyDownloadUrl,
+                    name: item.readyDownloadName || 'video.ts',
+                    saveAs: true,
+                    onload: () => {
+                        item.downloadMessage = '浏览器下载已完成。';
+                        scheduleRender(false);
+                        showToast('下载已开始，请查看通知栏');
+                    },
+                    onerror: (e) => {
+                        console.debug('[视频嗅探] Via GM_download 失败，回退 window.open', e);
+                        try { window.open(item.readyDownloadUrl, '_blank'); } catch (_) { location.href = item.readyDownloadUrl; }
+                    }
+                });
+                item.downloadMessage = '已调用系统下载，请查看通知栏或下载管理。';
+                scheduleRender(false);
+                showToast(item.downloadMessage);
+                return;
+            } catch (e) {
+                console.debug('[视频嗅探] Via GM_download 异常，回退', e);
+            }
+        }
         try {
             triggerAnchorDownload(item.readyDownloadUrl, item.readyDownloadName || 'video.ts');
         } catch (error) {
@@ -2325,6 +2352,10 @@
         item.downloadMessage = automatic
             ? '已调用浏览器下载；若未弹出，请点击“保存视频”。'
             : '已再次调用浏览器下载。';
+        // Via 手动触发时不再显示可能误导的“跳过”提示，合并提示已在下载完成时给出
+        if (isViaLike && automatic) {
+            item.downloadMessage = '已准备好，请点击“保存视频”完成保存。';
+        }
         scheduleRender(false);
         showToast(item.downloadMessage);
     }
