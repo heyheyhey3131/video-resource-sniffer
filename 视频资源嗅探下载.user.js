@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         视频资源嗅探与下载
 // @namespace    https://github.com/heyheyhey3131/video-resource-sniffer
-// @version      1.0.4
+// @version      1.1.0
 // @description  从网页、网络请求和流媒体清单中识别视频资源，并通过悬浮按钮提供下载、复制和 FFmpeg 选项。支持 HLS/DASH/MP4、AES-128 解密、PNG/GIF 伪装剥离、Via 移动端适配。
 // @author       OpenCode
 // @license      MIT
@@ -2131,9 +2131,26 @@
             if (controller.signal.aborted) throw createAbortError();
             if (fileHandle) writable = await fileHandle.createWritable();
 
+            // 大文件无 picker 时尝试 OPFS 流式落盘，避免 512MB 内存限制（Via/移动端亦可用）
+            let opfsHandle = null;
+            let useOpfs = false;
+            if (!writable && typeof navigator !== 'undefined' && navigator.storage && typeof navigator.storage.getDirectory === 'function') {
+                try {
+                    const opfs = await getOpfsWritable(`__sniffer_${Date.now()}_${outputName}`, controller.signal);
+                    if (opfs) {
+                        opfsHandle = opfs.handle;
+                        writable = opfs.writable;
+                        useOpfs = true;
+                        console.debug('[视频嗅探] 已启用 OPFS 流式写入', outputName);
+                    }
+                } catch (e) {
+                    console.debug('[视频嗅探] OPFS 启用失败，回退内存', e);
+                }
+            }
+
             item.downloadState = 'downloading';
             item.downloadMessage = writable
-                ? '正在下载并写入所选文件，请勿关闭页面。'
+                ? (useOpfs ? '正在下载并写入本地文件（OPFS），请勿关闭页面。' : '正在下载并写入所选文件，请勿关闭页面。')
                 : '正在下载并合并分片，完成后将弹出浏览器下载。';
             scheduleRender(false);
             const chunks = [];
@@ -2186,9 +2203,25 @@
             if (writable) {
                 await writable.close();
                 writable = null;
-                item.downloadMessage = skippedCount > 0
-                    ? `视频已保存，共 ${plan.segmentCount} 个分片（跳过 ${skippedCount} 个失效分片）。`
-                    : `视频已保存，共 ${plan.segmentCount} 个分片。`;
+                if (useOpfs && opfsHandle) {
+                    try {
+                        const file = await opfsHandle.getFile();
+                        const blob = file.slice(0, file.size, plan.mime);
+                        prepareBrowserDownload(item, blob, outputName);
+                        item.downloadMessage = skippedCount > 0
+                            ? `视频已保存至本地，共 ${plan.segmentCount} 个分片（跳过 ${skippedCount} 个）。`
+                            : `视频已保存至本地，共 ${plan.segmentCount} 个分片。`;
+                    } catch (e) {
+                        console.debug('[视频嗅探] OPFS 读取失败', e);
+                        item.downloadMessage = skippedCount > 0
+                            ? `视频已保存，共 ${plan.segmentCount} 个分片（跳过 ${skippedCount} 个）。`
+                            : `视频已保存，共 ${plan.segmentCount} 个分片。`;
+                    }
+                } else {
+                    item.downloadMessage = skippedCount > 0
+                        ? `视频已保存，共 ${plan.segmentCount} 个分片（跳过 ${skippedCount} 个失效分片）。`
+                        : `视频已保存，共 ${plan.segmentCount} 个分片。`;
+                }
             } else {
                 const blob = new Blob(chunks, { type: plan.mime });
                 prepareBrowserDownload(item, blob, outputName);
@@ -2492,6 +2525,24 @@
         if (ArrayBuffer.isView(value)) return value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
         if (value && typeof value.arrayBuffer === 'function') return value.arrayBuffer();
         throw new Error('无法读取分片二进制数据');
+    }
+
+    async function getOpfsWritable(outputName, signal) {
+        try {
+            if (!navigator.storage || typeof navigator.storage.getDirectory !== 'function') return null;
+            const root = await navigator.storage.getDirectory();
+            const handle = await root.getFileHandle(outputName, { create: true });
+            const writable = await handle.createWritable();
+            if (signal) {
+                signal.addEventListener('abort', () => {
+                    try { writable.abort(); } catch (_) {}
+                }, { once: true });
+            }
+            return { handle, writable };
+        } catch (e) {
+            console.debug('[视频嗅探] OPFS 不可用', e);
+            return null;
+        }
     }
 
     function unwrapImageSegment(buffer) {
