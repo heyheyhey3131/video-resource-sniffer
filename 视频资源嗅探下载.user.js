@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         视频资源嗅探与下载
-// @namespace    https://github.com/USERNAME/video-resource-sniffer
+// @namespace    https://github.com/heyheyhey3131/video-resource-sniffer
 // @version      1.0.0
 // @description  从网页、网络请求和流媒体清单中识别视频资源，并通过悬浮按钮提供下载、复制和 FFmpeg 选项。支持 HLS/DASH/MP4、AES-128 解密、PNG/GIF 伪装剥离、Via 移动端适配。
 // @author       OpenCode
 // @license      MIT
-// @homepage     https://github.com/USERNAME/video-resource-sniffer
-// @supportURL   https://github.com/USERNAME/video-resource-sniffer/issues
-// @updateURL    https://raw.githubusercontent.com/USERNAME/video-resource-sniffer/main/视频资源嗅探下载.user.js
-// @downloadURL  https://raw.githubusercontent.com/USERNAME/video-resource-sniffer/main/视频资源嗅探下载.user.js
+// @homepage     https://github.com/heyheyhey3131/video-resource-sniffer
+// @supportURL   https://github.com/heyheyhey3131/video-resource-sniffer/issues
+// @updateURL    https://raw.githubusercontent.com/heyheyhey3131/video-resource-sniffer/main/视频资源嗅探下载.user.js
+// @downloadURL  https://raw.githubusercontent.com/heyheyhey3131/video-resource-sniffer/main/视频资源嗅探下载.user.js
 // @match        http://*/*
 // @match        https://*/*
 // @run-at       document-start
@@ -21,7 +21,7 @@
 // @grant        GM_setValue
 // @connect      *
 // ==/UserScript==
-// @repo        https://github.com/USERNAME/video-resource-sniffer  - 启用 Via「自动更新」后将按 updateURL 每日检查更新
+// @repo        https://github.com/heyheyhey3131/video-resource-sniffer  - 启用 Via「自动更新」后将按 updateURL 每日检查更新
 
 (() => {
     'use strict';

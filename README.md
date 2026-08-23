@@ -1,7 +1,7 @@
 # 视频资源嗅探与下载 (Video Resource Sniffer)
 
 > 拟定仓库名：**`video-resource-sniffer`**  
-> 建议完整地址：`https://github.com/USERNAME/video-resource-sniffer`（请将 `USERNAME` 替换为你的 GitHub 用户名，创建同名仓库后按下方推送指引操作即可）
+> 建议完整地址：`https://github.com/heyheyhey3131/video-resource-sniffer`（请将 `heyheyhey3131` 替换为你的 GitHub 用户名，创建同名仓库后按下方推送指引操作即可）
 
 油猴脚本：在任意网页以悬浮按钮嗅探 `MP4/WebM/MOV`、`HLS(m3u8)`、`DASH(mpd)` 及内联 `JSON-LD` 中的视频资源，支持一键下载、复制链接/FFmpeg 命令、清单解析与 Via 移动端适配。
 
@@ -17,7 +17,7 @@
 ## 安装
 
 1. 浏览器安装 Tampermonkey / Violentmonkey / Via 内置脚本管理器
-2. 访问 Raw 链接安装：`https://raw.githubusercontent.com/USERNAME/video-resource-sniffer/main/视频资源嗅探下载.user.js`
+2. 访问 Raw 链接安装：`https://raw.githubusercontent.com/heyheyhey3131/video-resource-sniffer/main/视频资源嗅探下载.user.js`
 3. Via：脚本列表 → 右上角 `⋮` → `自动更新` 勾选后，每日按 `updateURL` 检查
 
 ## 自动更新
@@ -25,9 +25,9 @@
 脚本头已内置：
 
 ```js
-// @updateURL   https://raw.githubusercontent.com/USERNAME/video-resource-sniffer/main/视频资源嗅探下载.user.js
-// @downloadURL https://raw.githubusercontent.com/USERNAME/video-resource-sniffer/main/视频资源嗅探下载.user.js
-// @homepage    https://github.com/USERNAME/video-resource-sniffer
+// @updateURL   https://raw.githubusercontent.com/heyheyhey3131/video-resource-sniffer/main/视频资源嗅探下载.user.js
+// @downloadURL https://raw.githubusercontent.com/heyheyhey3131/video-resource-sniffer/main/视频资源嗅探下载.user.js
+// @homepage    https://github.com/heyheyhey3131/video-resource-sniffer
 ```
 
 Via 开启自动更新后无需手动操作；Tampermonkey 默认检查间隔为 1 天。
@@ -46,14 +46,14 @@ git init
 git add "视频资源嗅探下载.user.js" README.md LICENSE
 git commit -m "feat: v1.0.0 - HLS AES-128/PNG-GIF剥离/Via适配/febspot图片分类"
 git branch -M main
-git remote add origin https://github.com/USERNAME/video-resource-sniffer.git
+git remote add origin https://github.com/heyheyhey3131/video-resource-sniffer.git
 git push -u origin main
 # 发布 Release
 gh release create v1.0.0 --title "v1.0.0" --notes "首个稳定版，见 README" "视频资源嗅探下载.user.js"
 # 或在 GitHub 网页：Releases → Draft a new release → Tag v1.0.0
 ```
 
-将 `USERNAME` 替换为你的用户名，仓库名保持 `video-resource-sniffer` 即可与脚本内 `namespace/updateURL` 一致。
+将 `heyheyhey3131` 替换为你的用户名，仓库名保持 `video-resource-sniffer` 即可与脚本内 `namespace/updateURL` 一致。
 
 ## 版本
 
