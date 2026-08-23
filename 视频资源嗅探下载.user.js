@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         视频资源嗅探与下载
 // @namespace    https://github.com/heyheyhey3131/video-resource-sniffer
-// @version      1.0.0
+// @version      1.0.1
 // @description  从网页、网络请求和流媒体清单中识别视频资源，并通过悬浮按钮提供下载、复制和 FFmpeg 选项。支持 HLS/DASH/MP4、AES-128 解密、PNG/GIF 伪装剥离、Via 移动端适配。
 // @author       OpenCode
 // @license      MIT
@@ -2141,10 +2141,27 @@
             let completed = 0;
             const concurrency = 4;
 
+            let skippedCount = 0;
             for (let index = 0; index < plan.parts.length; index += concurrency) {
                 const batch = plan.parts.slice(index, index + concurrency);
-                const buffers = await Promise.all(batch.map((part) => requestHlsPart(part, item, controller.signal)));
-                for (const rawBuffer of buffers) {
+                const results = await Promise.allSettled(batch.map((part) => requestHlsPart(part, item, controller.signal)));
+                for (let i = 0; i < results.length; i++) {
+                    const result = results[i];
+                    const part = batch[i];
+                    if (result.status === 'rejected') {
+                        const err = result.reason;
+                        if (isAbortError(err)) throw err;
+                        const is404 = String(err.message).includes('404') || String(err.message).includes('403');
+                        if (is404) {
+                            console.debug('[视频嗅探] 分片 404/403 已跳过，继续下载', part.url, err.message);
+                            skippedCount += 1;
+                            completed += 1;
+                            item.downloadProgress = Math.round((completed / plan.parts.length) * 100);
+                            continue;
+                        }
+                        throw err;
+                    }
+                    const rawBuffer = result.value;
                     const buffer = unwrapImageSegment(rawBuffer);
                     if (controller.signal.aborted) throw createAbortError();
                     totalBytes += buffer.byteLength;
@@ -2160,19 +2177,29 @@
                 scheduleRender(false);
                 await yieldToMain();
             }
+            if (skippedCount > 0) {
+                console.debug(`[视频嗅探] 共跳过 ${skippedCount} 个失效分片`);
+            }
 
             item.downloadState = 'saving';
             scheduleRender(false);
             if (writable) {
                 await writable.close();
                 writable = null;
-                item.downloadMessage = `视频已保存，共 ${plan.segmentCount} 个分片。`;
+                item.downloadMessage = skippedCount > 0
+                    ? `视频已保存，共 ${plan.segmentCount} 个分片（跳过 ${skippedCount} 个失效分片）。`
+                    : `视频已保存，共 ${plan.segmentCount} 个分片。`;
             } else {
                 const blob = new Blob(chunks, { type: plan.mime });
                 prepareBrowserDownload(item, blob, outputName);
+                if (skippedCount > 0) {
+                    item.downloadMessage += `（跳过 ${skippedCount} 个失效分片）`;
+                }
             }
             item.mediaSize = totalBytes;
-            showToast(`视频下载完成，共 ${plan.segmentCount} 个分片`);
+            showToast(skippedCount > 0
+                ? `视频下载完成，共 ${plan.segmentCount} 个分片（跳过 ${skippedCount} 个失效分片，可能存在短暂卡顿）`
+                : `视频下载完成，共 ${plan.segmentCount} 个分片`);
         } catch (error) {
             controller.abort();
             if (writable) {
