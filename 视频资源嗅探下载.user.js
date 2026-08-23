@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         视频资源嗅探与下载
 // @namespace    https://github.com/heyheyhey3131/video-resource-sniffer
-// @version      1.0.1
+// @version      1.0.2
 // @description  从网页、网络请求和流媒体清单中识别视频资源，并通过悬浮按钮提供下载、复制和 FFmpeg 选项。支持 HLS/DASH/MP4、AES-128 解密、PNG/GIF 伪装剥离、Via 移动端适配。
 // @author       OpenCode
 // @license      MIT
@@ -2269,8 +2269,15 @@
 
         const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : '';
         const isViaLike = /Via|Quark|UCBrowser|QQBrowser|MiuiBrowser/i.test(userAgent);
-        // Via 等移动端 WebView 对 GM_download 的 Blob 支持不稳定（会出现 0.0B 或“处理blob数据”后无回调），直接走锚点下载更可靠
-        if (!isViaLike && typeof GM_download === 'function') {
+        // Via 等移动端 WebView 对 GM_download/自动锚点点击的 Blob 支持不稳定（0.0B / javabridge 异常），仅提示用户手动点击
+        if (isViaLike) {
+            console.debug('[视频嗅探] 检测到 Via/Quark 等浏览器，跳过自动下载，等待用户点击“保存视频”');
+            item.downloadMessage = '视频已合并，请点击“保存视频”完成保存（Via 需手动触发）。';
+            scheduleRender(false);
+            showToast('已准备好，请点击“保存视频”');
+            return;
+        }
+        if (typeof GM_download === 'function') {
             try {
                 const result = GM_download({
                     url: blobUrl,
@@ -2299,15 +2306,22 @@
             } catch (error) {
                 console.debug('[视频嗅探] Blob 下载提交失败，改用页面下载', error);
             }
-        } else if (isViaLike) {
-            console.debug('[视频嗅探] 检测到 Via/Quark 等浏览器，跳过 GM_download 直接使用锚点下载');
         }
         savePreparedVideo(item, true);
     }
 
     function savePreparedVideo(item, automatic = false) {
         if (!item.readyDownloadUrl) return;
-        triggerAnchorDownload(item.readyDownloadUrl, item.readyDownloadName || 'video.ts');
+        try {
+            triggerAnchorDownload(item.readyDownloadUrl, item.readyDownloadName || 'video.ts');
+        } catch (error) {
+            console.debug('[视频嗅探] 锚点下载触发失败，尝试备用方案', error);
+            try {
+                window.open(item.readyDownloadUrl, '_blank');
+            } catch (_) {
+                location.href = item.readyDownloadUrl;
+            }
+        }
         item.downloadMessage = automatic
             ? '已调用浏览器下载；若未弹出，请点击“保存视频”。'
             : '已再次调用浏览器下载。';
@@ -2618,15 +2632,24 @@
     }
 
     function triggerAnchorDownload(url, filename) {
-        const anchor = document.createElement('a');
-        anchor.href = url;
-        anchor.download = filename;
-        anchor.target = '_blank';
-        anchor.rel = 'noopener';
-        anchor.style.display = 'none';
-        document.documentElement.append(anchor);
-        anchor.click();
-        anchor.remove();
+        try {
+            const anchor = document.createElement('a');
+            anchor.href = url;
+            anchor.download = filename;
+            anchor.target = '_blank';
+            anchor.rel = 'noopener';
+            anchor.style.display = 'none';
+            // 必须在用户手势上下文中触发，部分 WebView 对非手势的 click 会抛 javabridge 异常
+            document.documentElement.append(anchor);
+            const evt = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
+            const dispatched = anchor.dispatchEvent(evt);
+            if (!dispatched) anchor.click();
+            // 延迟移除，避免 Via 等 WebView 在 click 后立即移除导致下载中断
+            window.setTimeout(() => anchor.remove(), 1000);
+        } catch (error) {
+            console.debug('[视频嗅探] triggerAnchorDownload 异常', error);
+            throw error;
+        }
     }
 
     function openResource(item) {
