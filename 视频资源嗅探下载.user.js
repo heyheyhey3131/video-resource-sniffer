@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         视频资源嗅探与下载
 // @namespace    https://github.com/heyheyhey3131/video-resource-sniffer
-// @version      1.2.1
+// @version      1.2.2
 // @description  从网页、网络请求和流媒体清单中识别视频资源，并通过悬浮按钮提供下载、在线播放、1DM外部下载和 FFmpeg 选项。支持 HLS/DASH/MP4、AES-128 解密、PNG/GIF 伪装剥离、Via 移动端适配。
 // @author       OpenCode
 // @license      MIT
@@ -281,6 +281,7 @@
             downloadMessage: '',
             readyDownloadUrl: '',
             readyDownloadName: '',
+            readyDownloadBlob: null,
             discoveredAt: now,
             updatedAt: now
         };
@@ -1930,9 +1931,10 @@
                 actions.append(progressButton, cancelButton);
             } else if (item.readyDownloadUrl) {
                 const playButton = actionButton('▶ 在线播放', true);
-                playButton.addEventListener('click', () => openVideoPlayerModal(item, item.readyDownloadUrl));
+                const previewUrl = item.kind === 'hls' ? item.url : item.readyDownloadUrl;
+                playButton.addEventListener('click', () => openVideoPlayerModal(item, previewUrl));
                 const saveButton = actionButton('保存视频');
-                saveButton.addEventListener('click', () => savePreparedVideo(item));
+                saveButton.addEventListener('click', () => { void savePreparedVideo(item); });
                 const extButton = actionButton('1DM 外部下载');
                 extButton.addEventListener('click', () => openInExternalDownloader(item));
                 const rebuildButton = actionButton('重新合并');
@@ -2318,6 +2320,7 @@
         const blobUrl = URL.createObjectURL(blob);
         item.readyDownloadUrl = blobUrl;
         item.readyDownloadName = outputName;
+        item.readyDownloadBlob = blob;
         item.downloadMessage = '视频已合并完成！可点击“保存视频”或“在线播放”。';
         scheduleRender(false);
 
@@ -2334,10 +2337,26 @@
         savePreparedVideo(item, true);
     }
 
-    function savePreparedVideo(item, automatic = false) {
+    async function savePreparedVideo(item, automatic = false) {
         if (!item.readyDownloadUrl) return;
         const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : '';
         const isViaLike = /Via|Quark|UCBrowser|QQBrowser|MiuiBrowser/i.test(userAgent);
+
+        if (isViaLike) {
+            const shareResult = await sharePreparedVideo(item);
+            if (shareResult === 'shared') {
+                item.downloadMessage = '已打开系统保存/分享面板，请选择保存位置或应用。';
+                scheduleRender(false);
+                showToast(item.downloadMessage);
+                return;
+            }
+            if (shareResult === 'cancelled') {
+                item.downloadMessage = '已取消保存。';
+                scheduleRender(false);
+                showToast(item.downloadMessage);
+                return;
+            }
+        }
 
         // 尝试通过标准 HTML5 锚点触发下载
         try {
@@ -2347,9 +2366,9 @@
         }
 
         if (isViaLike) {
-            item.downloadMessage = '视频已合并完成！提示：若 Via 原生下载器弹出 0.0B 任务请取消。推荐直接点击「▶ 在线播放」免下载流畅观看，或点击「1DM 外部下载」保存 MP4 到本地。';
+            item.downloadMessage = '当前浏览器不支持直接保存 Blob 文件时，推荐使用系统分享保存；若仍卡在 0B，请改用「1DM 外部下载」或「▶ 在线播放」。';
             scheduleRender(false);
-            showToast('若 Via 弹出 0.0B 请取消，推荐点击「在线播放」或「1DM 下载」');
+            showToast('若下载卡在 0B，请改用系统分享、1DM 或在线播放');
             return;
         }
 
@@ -2365,6 +2384,29 @@
         if (!item) return;
         item.readyDownloadUrl = '';
         item.readyDownloadName = '';
+        item.readyDownloadBlob = null;
+    }
+
+    async function sharePreparedVideo(item) {
+        try {
+            if (!item?.readyDownloadBlob || typeof navigator === 'undefined' || typeof File === 'undefined') return 'unsupported';
+            if (typeof navigator.share !== 'function') return 'unsupported';
+            const blob = item.readyDownloadBlob;
+            const file = new File([blob], item.readyDownloadName || 'video.ts', {
+                type: blob.type || 'application/octet-stream'
+            });
+            if (typeof navigator.canShare === 'function' && !navigator.canShare({ files: [file] })) return 'unsupported';
+            await navigator.share({
+                files: [file],
+                title: item.readyDownloadName || displayFilename(item),
+                text: '导出已合并的视频文件'
+            });
+            return 'shared';
+        } catch (error) {
+            if (isAbortError(error) || error?.name === 'AbortError') return 'cancelled';
+            console.debug('[视频嗅探] 系统分享保存失败', error);
+            return 'unsupported';
+        }
     }
 
     async function requestHlsPart(part, item, signal) {
@@ -2744,9 +2786,20 @@
             const hls = new HlsClass();
             hls.loadSource(playUrl);
             hls.attachMedia(video);
+            if (HlsClass.Events?.MANIFEST_PARSED) {
+                hls.on(HlsClass.Events.MANIFEST_PARSED, () => { video.play().catch(() => {}); });
+            }
+            if (HlsClass.Events?.ERROR) {
+                hls.on(HlsClass.Events.ERROR, (_event, data) => {
+                    if (!data?.fatal) return;
+                    console.debug('[视频嗅探] Hls.js 播放失败', data);
+                    showToast('在线播放失败，请尝试打开原链接或使用 1DM');
+                });
+            }
             playerDialog.addEventListener('close', () => hls.destroy());
         } else {
             video.src = playUrl;
+            video.play().catch(() => {});
         }
 
         wrap.append(video);
