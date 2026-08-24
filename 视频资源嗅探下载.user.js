@@ -2878,23 +2878,37 @@
     }
 
     async function copyText(text, successMessage) {
+        let copied = false;
         try {
             if (typeof GM_setClipboard === 'function') {
-                GM_setClipboard(text, 'text');
-            } else if (navigator.clipboard && navigator.clipboard.writeText) {
-                await navigator.clipboard.writeText(text);
-            } else {
+                try { GM_setClipboard(text, 'text'); copied = true; } catch (_) {}
+            }
+            if (!copied && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+                try { await navigator.clipboard.writeText(text); copied = true; } catch (_) {}
+            }
+            if (!copied) {
                 const textarea = document.createElement('textarea');
                 textarea.value = text;
-                textarea.style.cssText = 'position:fixed;left:-9999px;top:0;';
+                textarea.setAttribute('readonly', '');
+                textarea.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;';
                 document.documentElement.append(textarea);
+                textarea.focus();
                 textarea.select();
-                document.execCommand('copy');
+                try { textarea.setSelectionRange(0, text.length); } catch (_) {}
+                try { copied = document.execCommand('copy'); } catch (_) { copied = false; }
                 textarea.remove();
+                if (!copied) throw new Error('execCommand failed');
             }
             showToast(successMessage);
         } catch (_) {
-            showToast('复制失败，请手动复制链接');
+            // 最终兜底：尝试通过 prompt 让用户手动复制
+            try {
+                const ok = window.prompt('复制失败，请手动复制：', text);
+                if (ok !== null) showToast('已尝试手动复制');
+                else showToast('复制失败，请手动复制链接');
+            } catch (_) {
+                showToast('复制失败，请手动复制链接');
+            }
         }
     }
 
