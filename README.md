@@ -44,6 +44,8 @@ Via 开启自动更新后无需手动操作；Tampermonkey 默认检查间隔为
 
 ## 版本
 
+- `1.2.4` - 对齐 APK `be/w.smali:1255 F()` 与 `M/u.smali:6932 m3u8Content` 嗅探链路：清单/分片请求显式透传 `Referer/Origin/Cookie`（`CookieManager.getCookie`），按 `Content-Type` `charset=` 精确解码（对齐 `be/w.smali:1551-1878`），修复 51cwc/4kvms 鉴权与乱码清单
+- `1.2.3` - 同步优化 HLS 变体展开与 DRM 提示
 - `1.2.1` - 增强 Via 浏览器与移动端交互体验：将「▶ 在线播放」与「1DM 外部下载」提升为第一优先级推荐；针对 Via 弹出 0.0B 提供清晰引导；集成 Hls.js 直流预览
 - `1.2.0` - 修复 Via 浏览器“保存视频”弹出 0.0B 且进度卡 0 问题；新增内置“在线播放”弹窗；新增 1DM/ADM 外部下载器调用与 N_m3u8DL-RE 命令复制
 - `1.1.0` - 大文件 OPFS 流式落盘，突破 512MB 限制

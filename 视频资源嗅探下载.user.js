@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         视频资源嗅探与下载
 // @namespace    https://github.com/heyheyhey3131/video-resource-sniffer
-// @version      1.2.3
-// @description  从网页、网络请求和流媒体清单中识别视频资源，并通过悬浮按钮提供下载、在线播放、1DM外部下载和 FFmpeg 选项。支持 HLS/DASH/MP4、AES-128 解密、PNG/GIF 伪装剥离、Via 移动端适配。
+// @version      1.2.4
+// @description  从网页、网络请求和流媒体清单中识别视频资源，并通过悬浮按钮提供下载、在线播放、1DM外部下载和 FFmpeg 选项。支持 HLS/DASH/MP4、AES-128 解密、PNG/GIF 伪装剥离、Via 移动端适配。对齐 APK be/w.F 与 M/u.m3u8Content 的 Referer/Origin/Cookie 透传与 charset 精确解码。
 // @author       OpenCode
 // @license      MIT
 // @homepage     https://github.com/heyheyhey3131/video-resource-sniffer
@@ -1262,24 +1262,64 @@
         item.probeError = '';
         scheduleRender(false);
 
+        // APK 对齐：be/w.F:1255 显式透传 Referer/Origin/Cookie 并按 Content-Type charset 解码
         const doFetchText = (fetchUrl, fetchReferrer, fetchHeaders, fetchCredentials) => {
             const cred = fetchCredentials || 'include';
+            // 补齐 APK 透传的 Origin/Cookie（对应 be/w.F:1939 Origin + CookieManager.getCookie）
+            const enrichedHeaders = { ...(fetchHeaders || {}) };
+            try {
+                if (!enrichedHeaders.Origin && location.origin && location.origin !== 'null') enrichedHeaders.Origin = location.origin;
+                // 同源时尝试携带 Cookie（GM 无法自动带 httpOnly，但可透传 document.cookie）
+                if (cred !== 'omit' && !enrichedHeaders.Cookie) {
+                    const host = (() => { try { return new URL(fetchUrl).host; } catch(_) { return ''; } })();
+                    if (host && location.host === host && document.cookie) enrichedHeaders.Cookie = document.cookie.slice(0, 4096);
+                }
+                // 显式过滤 APK 排除的头（Host/Connection/Content-Length），避免 GM 报错
+                delete enrichedHeaders.Host; delete enrichedHeaders.host;
+                delete enrichedHeaders.Connection; delete enrichedHeaders['Content-Length'];
+            } catch(_) {}
+            // charset 解析（对齐 be/w.F:1551-1878 的 Content-Type ; charset= 逻辑）
+            const parseCharset = (contentType) => {
+                if (!contentType) return 'UTF-8';
+                const parts = String(contentType).split(';');
+                for (const p of parts) {
+                    const t = p.trim().toLowerCase();
+                    if (t.startsWith('charset=')) {
+                        const v = t.slice(8).replace(/^["']|["']$/g, '').trim();
+                        if (v) return v;
+                    }
+                }
+                return 'UTF-8';
+            };
+            const decodeWithCharset = (buffer, contentType) => {
+                const label = parseCharset(contentType);
+                try { return new TextDecoder(label).decode(buffer); }
+                catch(_) { try { return new TextDecoder('utf-8').decode(buffer); } catch(__) { return new TextDecoder().decode(buffer); } }
+            };
             if (typeof GM_xmlhttpRequest === 'function') {
                 return new Promise((resolve, reject) => {
                     GM_xmlhttpRequest({
                         method: 'GET',
                         url: fetchUrl,
-                        headers: fetchHeaders,
+                        headers: enrichedHeaders,
                         anonymous: cred === 'omit',
                         timeout: 15000,
-                        responseType: 'text',
+                        responseType: 'arraybuffer',
                         onload: (response) => {
                             if (response.status < 200 || response.status >= 400) {
                                 reject(new Error(`HTTP ${response.status}`));
                                 return;
                             }
-                            const body = String(response.responseText || response.response || '').slice(0, MAX_MANIFEST_BYTES);
                             const mime = headerValue(response.responseHeaders, 'content-type');
+                            // 优先按 charset 解码 ArrayBuffer，失败回退到 responseText
+                            let body = '';
+                            try {
+                                const buf = response.response;
+                                if (buf instanceof ArrayBuffer) body = decodeWithCharset(buf, mime);
+                                else if (buf && typeof buf.byteLength === 'number') body = decodeWithCharset(buf, mime);
+                                else body = String(response.responseText || response.response || '');
+                            } catch(_) { body = String(response.responseText || response.response || ''); }
+                            body = body.slice(0, MAX_MANIFEST_BYTES);
                             inspectResponse({
                                 url: response.finalUrl || fetchUrl,
                                 mime,
@@ -1296,10 +1336,14 @@
                     });
                 });
             }
-            return fetch(fetchUrl, { credentials: cred, referrer: fetchReferrer || location.href })
-                .then((response) => {
+            return fetch(fetchUrl, { credentials: cred, referrer: fetchReferrer || location.href, headers: enrichedHeaders })
+                .then(async (response) => {
                     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                    return response.text();
+                    const mime = response.headers.get('content-type') || '';
+                    const buf = await response.arrayBuffer();
+                    // 按 Content-Type charset 解码（APK 逻辑）
+                    const text = decodeWithCharset(buf, mime);
+                    return text;
                 })
                 .then((body) => {
                     inspectResponse({
@@ -2433,13 +2477,29 @@
     }
 
     function requestBinary(url, headers, referrer, signal) {
+        // APK 对齐：透传 Referer/Origin/Cookie（be/w.F:1939 + CookieManager），同时兼容 GM 与 fetch
+        const buildEnrichedHeaders = (base) => {
+            const h = { ...(base || {}) };
+            try {
+                if (!h.Origin && location.origin && location.origin !== 'null') h.Origin = location.origin;
+                if (!h.Referer && referrer) h.Referer = referrer;
+                // 同源 Cookie 透传（APK 用 CookieManager.getCookie）
+                if (!h.Cookie) {
+                    try { const u = new URL(url); if (location.host === u.host && document.cookie) h.Cookie = document.cookie.slice(0, 4096); } catch(_) {}
+                }
+                delete h.Host; delete h.host; delete h.Connection; delete h['Content-Length'];
+            } catch(_) {}
+            return h;
+        };
+        const enrichedForGm = buildEnrichedHeaders(headers);
         const fetchFallback = () => {
             const fetchHeaders = {};
             if (headers.Range) fetchHeaders.Range = headers.Range;
-            // 尝试不带 Referer 的 fetch，避免某些 CDN 对 Referer 的严格校验（如 4kvms 的 dc.xhscdn.com）
+            // 对齐 APK：首次带 Referer/Origin/Cookie，失败回退到裸请求
+            const withCredHeaders = buildEnrichedHeaders(fetchHeaders);
             return fetch(url, {
                 credentials: 'include',
-                headers: fetchHeaders,
+                headers: withCredHeaders,
                 referrer: referrer || location.href,
                 signal
             }).then((response) => {
@@ -2484,7 +2544,7 @@
                     requestHandle = GM_xmlhttpRequest({
                         method: 'GET',
                         url,
-                        headers,
+                        headers: enrichedForGm,
                         anonymous: false,
                         timeout: 30000,
                         responseType: 'arraybuffer',
