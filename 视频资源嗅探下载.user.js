@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         视频资源嗅探与下载
 // @namespace    https://github.com/heyheyhey3131/video-resource-sniffer
-// @version      1.2.0
-// @description  从网页、网络请求和流媒体清单中识别视频资源，并通过悬浮按钮提供下载、在线播放、复制和 FFmpeg 选项。支持 HLS/DASH/MP4、AES-128 解密、PNG/GIF 伪装剥离、Via 移动端适配。
+// @version      1.2.1
+// @description  从网页、网络请求和流媒体清单中识别视频资源，并通过悬浮按钮提供下载、在线播放、1DM外部下载和 FFmpeg 选项。支持 HLS/DASH/MP4、AES-128 解密、PNG/GIF 伪装剥离、Via 移动端适配。
 // @author       OpenCode
 // @license      MIT
 // @homepage     https://github.com/heyheyhey3131/video-resource-sniffer
@@ -1917,9 +1917,11 @@
             if (directResource) {
                 const downloadButton = actionButton('下载', true);
                 downloadButton.addEventListener('click', () => downloadResource(item));
-                const playButton = actionButton('在线播放');
+                const playButton = actionButton('▶ 在线播放');
                 playButton.addEventListener('click', () => openVideoPlayerModal(item, item.url));
-                actions.append(downloadButton, playButton);
+                const extButton = actionButton('外部下载');
+                extButton.addEventListener('click', () => openInExternalDownloader(item));
+                actions.append(downloadButton, playButton, extButton);
             } else if (item.downloadState) {
                 const progressButton = actionButton(hlsDownloadProgressLabel(item), true);
                 progressButton.disabled = true;
@@ -1927,19 +1929,23 @@
                 cancelButton.addEventListener('click', () => cancelHlsDownload(item));
                 actions.append(progressButton, cancelButton);
             } else if (item.readyDownloadUrl) {
-                const saveButton = actionButton('保存视频', true);
-                saveButton.addEventListener('click', () => savePreparedVideo(item));
-                const playButton = actionButton('在线播放');
+                const playButton = actionButton('▶ 在线播放', true);
                 playButton.addEventListener('click', () => openVideoPlayerModal(item, item.readyDownloadUrl));
+                const saveButton = actionButton('保存视频');
+                saveButton.addEventListener('click', () => savePreparedVideo(item));
+                const extButton = actionButton('1DM 外部下载');
+                extButton.addEventListener('click', () => openInExternalDownloader(item));
                 const rebuildButton = actionButton('重新合并');
                 rebuildButton.addEventListener('click', () => downloadHlsVideo(item));
-                actions.append(saveButton, playButton, rebuildButton);
+                actions.append(playButton, saveButton, extButton, rebuildButton);
             } else if (downloadableHls) {
                 const videoButton = actionButton('下载视频', true);
                 videoButton.addEventListener('click', () => downloadHlsVideo(item));
-                const playButton = actionButton('在线播放');
+                const playButton = actionButton('▶ 在线播放');
                 playButton.addEventListener('click', () => openVideoPlayerModal(item, item.url));
-                actions.append(videoButton, playButton);
+                const extButton = actionButton('1DM 外部下载');
+                extButton.addEventListener('click', () => openInExternalDownloader(item));
+                actions.append(videoButton, playButton, extButton);
             }
 
             if (item.kind === 'hls' || item.kind === 'dash') {
@@ -1953,9 +1959,7 @@
                 ffmpegButton.addEventListener('click', () => copyText(createFfmpegCommand(item), 'FFmpeg 命令已复制'));
                 const nm3u8Button = actionButton('复制 N_m3u8DL');
                 nm3u8Button.addEventListener('click', () => copyText(createNm3u8Command(item), 'N_m3u8DL-RE 命令已复制'));
-                const extButton = actionButton('外部下载');
-                extButton.addEventListener('click', () => openInExternalDownloader(item));
-                actions.append(ffmpegButton, nm3u8Button, extButton);
+                actions.append(ffmpegButton, nm3u8Button);
             }
         }
 
@@ -2335,20 +2339,25 @@
         const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : '';
         const isViaLike = /Via|Quark|UCBrowser|QQBrowser|MiuiBrowser/i.test(userAgent);
 
-        // 注意：Via 等移动端 WebView 原生 Java 下载器无法连接 blob: 内存协议，
-        // 绝对不能对 blob: 调用 GM_download，否则会导致 0.0B 空任务且进度卡 0。
-        // 统一步走标准 HTML5 锚点下载，或提示使用在线播放
+        // 尝试通过标准 HTML5 锚点触发下载
         try {
             triggerAnchorDownload(item.readyDownloadUrl, item.readyDownloadName || 'video.ts');
-            item.downloadMessage = isViaLike
-                ? '已触发保存；若 Via 限制下载，可点击“在线播放”直接观看，或复制直链使用 1DM 下载。'
-                : (automatic ? '已调用浏览器下载；若未弹出，请点击“保存视频”。' : '已再次调用浏览器下载。');
         } catch (error) {
             console.debug('[视频嗅探] 锚点下载触发失败', error);
-            item.downloadMessage = '保存触发失败，可点击“在线播放”直接观看。';
         }
+
+        if (isViaLike) {
+            item.downloadMessage = '视频已合并完成！提示：若 Via 原生下载器弹出 0.0B 任务请取消。推荐直接点击「▶ 在线播放」免下载流畅观看，或点击「1DM 外部下载」保存 MP4 到本地。';
+            scheduleRender(false);
+            showToast('若 Via 弹出 0.0B 请取消，推荐点击「在线播放」或「1DM 下载」');
+            return;
+        }
+
+        item.downloadMessage = automatic
+            ? '已调用浏览器下载；若未弹出，请点击“保存视频”。'
+            : '已再次调用浏览器下载。';
         scheduleRender(false);
-        showToast(isViaLike ? '已尝试保存，或可直接点击“在线播放”' : item.downloadMessage);
+        showToast(item.downloadMessage);
     }
 
     function releasePreparedDownload(item) {
@@ -2728,9 +2737,19 @@
         video.setAttribute('webkit-playsinline', 'true');
         video.setAttribute('x5-playsinline', 'true');
         video.setAttribute('x5-video-player-type', 'h5');
-        video.src = playUrl;
-        wrap.append(video);
 
+        const isM3u8 = /\.m3u8(?:$|[?#])/i.test(playUrl);
+        const HlsClass = (typeof unsafeWindow !== 'undefined' && unsafeWindow.Hls) || window.Hls;
+        if (isM3u8 && !video.canPlayType('application/vnd.apple.mpegurl') && HlsClass && HlsClass.isSupported && HlsClass.isSupported()) {
+            const hls = new HlsClass();
+            hls.loadSource(playUrl);
+            hls.attachMedia(video);
+            playerDialog.addEventListener('close', () => hls.destroy());
+        } else {
+            video.src = playUrl;
+        }
+
+        wrap.append(video);
         panel.append(header, wrap);
         playerDialog.append(panel);
         installDialogLightDismiss(playerDialog);
@@ -2749,20 +2768,32 @@
     function openInExternalDownloader(item) {
         if (!item || !item.url) return;
         const url = item.url;
+        
         let dmUrl = `1dm://${url.replace(/^https?:\/\//, '')}`;
         if (item.referrer) {
             dmUrl += (dmUrl.includes('?') ? '&' : '?') + `header_Referer=${encodeURIComponent(item.referrer)}`;
         }
+
+        const scheme = url.startsWith('https') ? 'https' : 'http';
+        const rawNoProto = url.replace(/^https?:\/\//, '');
+        const intentUrl = `intent://${rawNoProto}#Intent;scheme=${scheme};type=video/*;action=android.intent.action.VIEW;end`;
+
+        copyText(url, '已复制媒体直链；正在尝试唤起 1DM / 外部下载器…');
+
         try {
             const a = document.createElement('a');
             a.href = dmUrl;
-            a.style.display = 'none';
             document.documentElement.append(a);
             a.click();
             window.setTimeout(() => a.remove(), 1000);
-            showToast('已尝试唤起 1DM / 外部下载器');
         } catch (_) {
-            copyText(url, '已复制媒体直链，请在 1DM/ADM 中新建下载');
+            try {
+                const a = document.createElement('a');
+                a.href = intentUrl;
+                document.documentElement.append(a);
+                a.click();
+                window.setTimeout(() => a.remove(), 1000);
+            } catch (__) {}
         }
     }
 
