@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         视频资源嗅探与下载
 // @namespace    https://github.com/heyheyhey3131/video-resource-sniffer
-// @version      1.1.1
-// @description  从网页、网络请求和流媒体清单中识别视频资源，并通过悬浮按钮提供下载、复制和 FFmpeg 选项。支持 HLS/DASH/MP4、AES-128 解密、PNG/GIF 伪装剥离、Via 移动端适配。
+// @version      1.2.0
+// @description  从网页、网络请求和流媒体清单中识别视频资源，并通过悬浮按钮提供下载、在线播放、复制和 FFmpeg 选项。支持 HLS/DASH/MP4、AES-128 解密、PNG/GIF 伪装剥离、Via 移动端适配。
 // @author       OpenCode
 // @license      MIT
 // @homepage     https://github.com/heyheyhey3131/video-resource-sniffer
@@ -1729,11 +1729,18 @@
                 .vrd-chips { justify-content: flex-start; margin-top: 8px; }
                 .vrd-footer { padding-inline: 16px; }
             }
+            .vrd-player-dialog { pointer-events: auto; width: min(860px, calc(100dvw - 24px)); max-width: none; margin: auto; padding: 0; border: 1px solid rgba(148,163,184,.34); border-radius: 20px; color: #e7edf8; background: #070c1a; box-shadow: 0 30px 100px rgba(0,0,0,.75); overflow: hidden; }
+            .vrd-player-dialog::backdrop { background: rgba(0,0,0,.78); backdrop-filter: blur(6px); }
+            .vrd-player-panel { display: flex; flex-direction: column; width: 100%; }
+            .vrd-player-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; border-bottom: 1px solid rgba(148,163,184,.15); background: #0c1325; }
+            .vrd-player-title { margin: 0; color: #f8fafc; font-size: 14px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+            .vrd-player-wrap { position: relative; width: 100%; background: #000; display: flex; justify-content: center; align-items: center; min-height: 200px; }
+            .vrd-player-video { width: 100%; max-height: 75dvh; object-fit: contain; outline: none; }
             @media (prefers-reduced-motion: reduce) {
                 .vrd-fab, .vrd-fab[data-flash="true"], .vrd-toast { animation: none; transition: none; }
             }
             @media (prefers-contrast: more) {
-                .vrd-dialog, .vrd-resource, .vrd-action-button, .vrd-secondary-button { border-color: #94a3b8; }
+                .vrd-dialog, .vrd-resource, .vrd-action-button, .vrd-secondary-button, .vrd-player-dialog { border-color: #94a3b8; }
             }
         `;
     }
@@ -1910,7 +1917,9 @@
             if (directResource) {
                 const downloadButton = actionButton('下载', true);
                 downloadButton.addEventListener('click', () => downloadResource(item));
-                actions.append(downloadButton);
+                const playButton = actionButton('在线播放');
+                playButton.addEventListener('click', () => openVideoPlayerModal(item, item.url));
+                actions.append(downloadButton, playButton);
             } else if (item.downloadState) {
                 const progressButton = actionButton(hlsDownloadProgressLabel(item), true);
                 progressButton.disabled = true;
@@ -1920,13 +1929,17 @@
             } else if (item.readyDownloadUrl) {
                 const saveButton = actionButton('保存视频', true);
                 saveButton.addEventListener('click', () => savePreparedVideo(item));
+                const playButton = actionButton('在线播放');
+                playButton.addEventListener('click', () => openVideoPlayerModal(item, item.readyDownloadUrl));
                 const rebuildButton = actionButton('重新合并');
                 rebuildButton.addEventListener('click', () => downloadHlsVideo(item));
-                actions.append(saveButton, rebuildButton);
+                actions.append(saveButton, playButton, rebuildButton);
             } else if (downloadableHls) {
                 const videoButton = actionButton('下载视频', true);
                 videoButton.addEventListener('click', () => downloadHlsVideo(item));
-                actions.append(videoButton);
+                const playButton = actionButton('在线播放');
+                playButton.addEventListener('click', () => openVideoPlayerModal(item, item.url));
+                actions.append(videoButton, playButton);
             }
 
             if (item.kind === 'hls' || item.kind === 'dash') {
@@ -1938,7 +1951,11 @@
             if (item.kind === 'hls' || item.kind === 'dash') {
                 const ffmpegButton = actionButton('复制 FFmpeg');
                 ffmpegButton.addEventListener('click', () => copyText(createFfmpegCommand(item), 'FFmpeg 命令已复制'));
-                actions.append(ffmpegButton);
+                const nm3u8Button = actionButton('复制 N_m3u8DL');
+                nm3u8Button.addEventListener('click', () => copyText(createNm3u8Command(item), 'N_m3u8DL-RE 命令已复制'));
+                const extButton = actionButton('外部下载');
+                extButton.addEventListener('click', () => openInExternalDownloader(item));
+                actions.append(ffmpegButton, nm3u8Button, extButton);
             }
         }
 
@@ -2297,49 +2314,19 @@
         const blobUrl = URL.createObjectURL(blob);
         item.readyDownloadUrl = blobUrl;
         item.readyDownloadName = outputName;
-        item.downloadMessage = '视频已合并，正在调用浏览器下载；若未弹出，请点击“保存视频”。';
+        item.downloadMessage = '视频已合并完成！可点击“保存视频”或“在线播放”。';
         scheduleRender(false);
 
         const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : '';
         const isViaLike = /Via|Quark|UCBrowser|QQBrowser|MiuiBrowser/i.test(userAgent);
-        // Via 等移动端 WebView 对 GM_download/自动锚点点击的 Blob 支持不稳定（0.0B / javabridge 异常），仅提示用户手动点击
         if (isViaLike) {
-            console.debug('[视频嗅探] 检测到 Via/Quark 等浏览器，跳过自动下载，等待用户点击“保存视频”');
-            item.downloadMessage = '视频已合并，请点击“保存视频”完成保存（Via 需手动触发）。';
+            console.debug('[视频嗅探] 检测到 Via/Quark 等移动端浏览器，等待用户选择保存或在线播放');
+            item.downloadMessage = '视频已合并完成！请点击“保存视频”或“在线播放”直接观看。';
             scheduleRender(false);
-            showToast('已准备好，请点击“保存视频”');
+            showToast('视频已合并，可保存或直接播放');
             return;
         }
-        if (typeof GM_download === 'function') {
-            try {
-                const result = GM_download({
-                    url: blobUrl,
-                    name: outputName,
-                    saveAs: true,
-                    onload: () => {
-                        item.downloadMessage = '浏览器下载已完成。';
-                        scheduleRender(false);
-                    },
-                    onerror: (error) => {
-                        console.debug('[视频嗅探] GM_download 失败，回退到锚点下载', error);
-                        savePreparedVideo(item, true);
-                    },
-                    ontimeout: () => {
-                        console.debug('[视频嗅探] GM_download 超时，回退到锚点下载');
-                        savePreparedVideo(item, true);
-                    }
-                });
-                if (result && typeof result.catch === 'function') {
-                    result.catch((error) => {
-                        console.debug('[视频嗅探] GM_download Promise 拒绝，回退到锚点下载', error);
-                        savePreparedVideo(item, true);
-                    });
-                }
-                return;
-            } catch (error) {
-                console.debug('[视频嗅探] Blob 下载提交失败，改用页面下载', error);
-            }
-        }
+
         savePreparedVideo(item, true);
     }
 
@@ -2347,60 +2334,21 @@
         if (!item.readyDownloadUrl) return;
         const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : '';
         const isViaLike = /Via|Quark|UCBrowser|QQBrowser|MiuiBrowser/i.test(userAgent);
-        // Via 的 WebView 对 blob: 的 a[download] 与 GM_download 均可能抛 javabridge 异常
-        // 统一走最稳定的 window.open / location.href，且必须在用户手势上下文中触发
-        if (isViaLike) {
-            try {
-                // 优先尝试 GM_download 的 blob:（Via 4.8+ 对 blob: 支持较好，且走系统下载管理器）
-                if (typeof GM_download === 'function') {
-                    GM_download({
-                        url: item.readyDownloadUrl,
-                        name: item.readyDownloadName || 'video.ts',
-                        saveAs: true,
-                        onload: () => {
-                            item.downloadMessage = '浏览器下载已完成，请查看通知栏。';
-                            scheduleRender(false);
-                        },
-                        onerror: () => {
-                            // 回退到 window.open，此路径在手势内不会抛 javabridge
-                            try { window.open(item.readyDownloadUrl, '_blank'); } catch (_) { location.href = item.readyDownloadUrl; }
-                        }
-                    });
-                    item.downloadMessage = '已调用系统下载，请查看通知栏或下载管理。';
-                    scheduleRender(false);
-                    showToast(item.downloadMessage);
-                    return;
-                }
-            } catch (e) {
-                console.debug('[视频嗅探] Via GM_download 异常', e);
-            }
-            // 纯 WebView 回退：必须在用户点击的同步调用栈中执行 window.open
-            try {
-                const win = window.open(item.readyDownloadUrl, '_blank');
-                if (!win) location.href = item.readyDownloadUrl;
-            } catch (_) {
-                location.href = item.readyDownloadUrl;
-            }
-            item.downloadMessage = '已尝试打开视频，请在新页面长按保存或查看下载管理。';
-            scheduleRender(false);
-            showToast(item.downloadMessage);
-            return;
-        }
+
+        // 注意：Via 等移动端 WebView 原生 Java 下载器无法连接 blob: 内存协议，
+        // 绝对不能对 blob: 调用 GM_download，否则会导致 0.0B 空任务且进度卡 0。
+        // 统一步走标准 HTML5 锚点下载，或提示使用在线播放
         try {
             triggerAnchorDownload(item.readyDownloadUrl, item.readyDownloadName || 'video.ts');
+            item.downloadMessage = isViaLike
+                ? '已触发保存；若 Via 限制下载，可点击“在线播放”直接观看，或复制直链使用 1DM 下载。'
+                : (automatic ? '已调用浏览器下载；若未弹出，请点击“保存视频”。' : '已再次调用浏览器下载。');
         } catch (error) {
-            console.debug('[视频嗅探] 锚点下载触发失败，尝试备用方案', error);
-            try {
-                window.open(item.readyDownloadUrl, '_blank');
-            } catch (_) {
-                location.href = item.readyDownloadUrl;
-            }
+            console.debug('[视频嗅探] 锚点下载触发失败', error);
+            item.downloadMessage = '保存触发失败，可点击“在线播放”直接观看。';
         }
-        item.downloadMessage = automatic
-            ? '已调用浏览器下载；若未弹出，请点击“保存视频”。'
-            : '已再次调用浏览器下载。';
         scheduleRender(false);
-        showToast(item.downloadMessage);
+        showToast(isViaLike ? '已尝试保存，或可直接点击“在线播放”' : item.downloadMessage);
     }
 
     function releasePreparedDownload(item) {
@@ -2691,11 +2639,12 @@
             const blobUrl = URL.createObjectURL(blob);
             triggerAnchorDownload(blobUrl, displayFilename(item));
             window.setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
-            showToast('清单文件已保存；合并为视频可使用 FFmpeg');
+            showToast('清单文件已保存；合并为视频可使用 FFmpeg 或 N_m3u8DL-RE');
             return;
         }
 
-        if (typeof GM_download === 'function') {
+        // 仅对非 blob 的真实 http/https 直链使用 GM_download
+        if (typeof GM_download === 'function' && /^https?:\/\//i.test(item.url)) {
             try {
                 const options = {
                     url: item.url,
@@ -2728,20 +2677,99 @@
             const anchor = document.createElement('a');
             anchor.href = url;
             anchor.download = filename;
-            anchor.target = '_blank';
             anchor.rel = 'noopener';
             anchor.style.display = 'none';
-            // 必须在用户手势上下文中触发，部分 WebView 对非手势的 click 会抛 javabridge 异常
+            // 必须在用户手势上下文中触发
             document.documentElement.append(anchor);
             const evt = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
             const dispatched = anchor.dispatchEvent(evt);
             if (!dispatched) anchor.click();
-            // 延迟移除，避免 Via 等 WebView 在 click 后立即移除导致下载中断
+            // 延迟移除，避免某些 WebView 在 click 后立即移除导致下载中断
             window.setTimeout(() => anchor.remove(), 1000);
         } catch (error) {
             console.debug('[视频嗅探] triggerAnchorDownload 异常', error);
             throw error;
         }
+    }
+
+    function openVideoPlayerModal(item, overrideUrl = '') {
+        if (!IS_TOP_FRAME || !ui) return;
+        const playUrl = overrideUrl || item.readyDownloadUrl || item.url;
+        if (!playUrl) return;
+
+        let playerDialog = ui.shadow.querySelector('.vrd-player-dialog');
+        if (playerDialog) {
+            playerDialog.querySelector('video')?.pause();
+            playerDialog.remove();
+        }
+
+        playerDialog = createElement('dialog', 'vrd-player-dialog');
+        playerDialog.setAttribute('aria-label', '视频在线播放');
+
+        const panel = createElement('div', 'vrd-player-panel');
+        const header = createElement('div', 'vrd-player-header');
+        const title = createElement('h3', 'vrd-player-title', displayFilename(item));
+        const closeBtn = createElement('button', 'vrd-icon-button', '×');
+        closeBtn.type = 'button';
+        closeBtn.setAttribute('aria-label', '关闭播放器');
+        closeBtn.addEventListener('click', () => {
+            playerDialog.querySelector('video')?.pause();
+            if (typeof playerDialog.close === 'function') playerDialog.close();
+            playerDialog.remove();
+        });
+        header.append(title, closeBtn);
+
+        const wrap = createElement('div', 'vrd-player-wrap');
+        const video = document.createElement('video');
+        video.className = 'vrd-player-video';
+        video.controls = true;
+        video.autoplay = true;
+        video.playsInline = true;
+        video.setAttribute('webkit-playsinline', 'true');
+        video.setAttribute('x5-playsinline', 'true');
+        video.setAttribute('x5-video-player-type', 'h5');
+        video.src = playUrl;
+        wrap.append(video);
+
+        panel.append(header, wrap);
+        playerDialog.append(panel);
+        installDialogLightDismiss(playerDialog);
+
+        playerDialog.addEventListener('close', () => {
+            video.pause();
+            playerDialog.remove();
+        });
+
+        ui.shadow.append(playerDialog);
+        if (typeof playerDialog.showModal === 'function') playerDialog.showModal();
+        else playerDialog.setAttribute('open', '');
+        showToast('正在播放视频');
+    }
+
+    function openInExternalDownloader(item) {
+        if (!item || !item.url) return;
+        const url = item.url;
+        let dmUrl = `1dm://${url.replace(/^https?:\/\//, '')}`;
+        if (item.referrer) {
+            dmUrl += (dmUrl.includes('?') ? '&' : '?') + `header_Referer=${encodeURIComponent(item.referrer)}`;
+        }
+        try {
+            const a = document.createElement('a');
+            a.href = dmUrl;
+            a.style.display = 'none';
+            document.documentElement.append(a);
+            a.click();
+            window.setTimeout(() => a.remove(), 1000);
+            showToast('已尝试唤起 1DM / 外部下载器');
+        } catch (_) {
+            copyText(url, '已复制媒体直链，请在 1DM/ADM 中新建下载');
+        }
+    }
+
+    function createNm3u8Command(item) {
+        const outputBase = sanitizeFilename(displayFilename(item).replace(/\.(?:m3u8|mpd)$/i, ''), 'video');
+        const referer = item.referrer ? ` --header "Referer: ${item.referrer}"` : '';
+        return `N_m3u8DL-RE ${quoteCommandArgument(item.url)}${referer} --save-name ${quoteCommandArgument(outputBase)}`;
     }
 
     function openResource(item) {
